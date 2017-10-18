@@ -8,102 +8,100 @@ import (
 	"time"
 
 	"github.com/garyburd/redigo/redis"
-	"github.com/spf13/pflag"
-)
-
-const (
-	defaultChannel = "chaos"
-	defaultMessage = "mind exploder"
 )
 
 var (
+	messages []string
+	pub      pubsub
+	sub      pubsub
+)
+
+type pubsub struct {
+	*options
+	role    role
+	conn    redis.Conn
+	counter int
+	log     *log.Logger
+}
+
+type options struct {
 	host     string
 	password string
 	db       int
 	channel  string
-	message  string
-	counter  int
-	pubLog   *log.Logger
-	subLog   *log.Logger
+	messages []string
+}
+
+type role string
+
+const (
+	isPub role = "pub"
+	isSub role = "sub"
 )
 
-func newLogger(name string) *log.Logger {
-	return log.New(os.Stderr, fmt.Sprintf("[%s] ", name), log.Ltime|log.Lmicroseconds)
+func newPub(opts *options) pubsub {
+	return newPubSub(isPub, opts)
 }
 
-func choice(options []string) string {
-	i := rand.Intn(len(options))
-	return options[i]
+func newSub(opts *options) pubsub {
+	return newPubSub(isSub, opts)
 }
 
-func init() {
-	pubLog = newLogger("pub")
-	subLog = newLogger("sub")
-
-	pflag.StringVarP(&host, "host", "h", "localhost:6379", "redis host")
-	pflag.StringVarP(&password, "password", "p", "", "redis password")
-	pflag.IntVarP(&db, "db", "d", 0, "redis database")
-	pflag.StringVarP(
-		&channel, "channel", "c", defaultChannel, "channel to publish to")
-	pflag.StringVarP(
-		&message, "message", "m", defaultMessage, "message to publish")
-	pflag.Parse()
-}
-
-func main() {
-	pubConn := getRedisConn()
-	subConn := getRedisConn()
-	go publish(pubConn)
-	time.Sleep(500 * time.Millisecond)
-	go subscribe(subConn)
-	for {
+func newPubSub(role role, opts *options) pubsub {
+	conn, err := redis.Dial(
+		"tcp", opts.host, redis.DialPassword(opts.password), redis.DialDatabase(opts.db))
+	check(err)
+	return pubsub{
+		options: opts,
+		role:    role,
+		conn:    conn,
+		counter: 0,
+		log:     log.New(os.Stderr, fmt.Sprintf("[%s] ", role), log.Ltime|log.Lmicroseconds),
 	}
 }
 
-func getRedisConn() redis.Conn {
-	conn, err := redis.Dial(
-		"tcp",
-		host,
-		redis.DialPassword(password),
-		redis.DialDatabase(db),
-	)
-	check(err)
-	return conn
-}
-
-func publish(conn redis.Conn) {
+func (pub pubsub) publish() {
 	for {
-		msg := fmt.Sprintf("[%04d] %s", counter, message)
-		n, err := redis.Int(conn.Do("PUBLISH", channel, msg))
+		msg := fmt.Sprintf("[%04d] %s", pub.counter, choice(pub.messages))
+		n, err := redis.Int(pub.conn.Do("PUBLISH", pub.channel, msg))
 		check(err)
-		counter++
+		pub.counter++
 
 		msg = fmt.Sprintf("message received by (%d) recipient", n)
 		if n != 1 {
-			pubLog.Print(msg, "s")
+			pub.log.Print(msg, "s")
 		} else {
-			pubLog.Print(msg)
+			pub.log.Print(msg)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-func subscribe(conn redis.Conn) {
-	psc := redis.PubSubConn{Conn: conn}
-	psc.Subscribe(channel)
+func (sub pubsub) subscribe() {
+	psc := redis.PubSubConn{Conn: sub.conn}
+	psc.Subscribe(sub.channel)
 
-	for counter < 10 {
+	for sub.counter < 10 {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			subLog.Printf("channel: %s | message: %s\n", v.Channel, v.Data)
+			sub.log.Printf(
+				"channel: %s | message: %s\n",
+				v.Channel, v.Data)
 		case redis.Subscription:
-			subLog.Printf("channel: %s | kind: %s | count: %d\n", v.Channel, v.Kind, v.Count)
+			sub.log.Printf(
+				"channel: %s | kind: %s | count: %d\n",
+				v.Channel, v.Kind, v.Count)
 		case error:
 			panic(v)
 		}
 	}
-	err := psc.Unsubscribe(channel)
+	err := psc.Unsubscribe(sub.channel)
 	check(err)
+}
+
+func choice(options []string) string {
+	i := rand.Intn(len(options))
+	return options[i]
 }
 
 func check(err error) {
