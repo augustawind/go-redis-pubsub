@@ -22,15 +22,19 @@ var (
 )
 
 func init() {
-	flags = pflag.NewFlagSet("pubsub", pflag.PanicOnError)
+	flags = pflag.NewFlagSet("pubsub", pflag.ExitOnError)
 
 	opts := new(options)
-	flags.StringVarP(&opts.host, "host", "h", "localhost:6379", "redis host")
-	flags.StringVarP(&opts.password, "password", "p", "", "redis password")
-	flags.IntVarP(&opts.db, "db", "d", 0, "redis database")
-	flags.StringVarP(&opts.channel, "channel", "c", defaultChannel, "channel to publish to")
-	flags.StringSliceVarP(
-		&opts.messages, "messages", "m", defaultMessages, "message pool to be published from")
+	flags.StringVarP(&opts.host, "host", "h", "localhost:6379",
+		"redis server HOST:PORT")
+	flags.StringVarP(&opts.password, "password", "p", "",
+		"redis server password")
+	flags.IntVarP(&opts.db, "db", "d", 0,
+		"redis server database (default 0)")
+	flags.StringVarP(&opts.channel, "channel", "c", defaultChannel,
+		"redis channel name")
+	flags.StringSliceVarP(&opts.messages, "messages", "m", nil,
+		"messages to publish to the channel, chosen randomly (default messages included)")
 	flags.Parse(os.Args)
 
 	pub = newPub(opts)
