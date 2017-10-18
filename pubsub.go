@@ -9,7 +9,7 @@ import (
 )
 
 type ClientOptions struct {
-	name     string
+	role     string
 	host     string
 	password string
 	db       int
@@ -25,7 +25,7 @@ func (opt *ClientOptions) newConn() redis.Conn {
 }
 
 func (opt *ClientOptions) newLogger() *log.Logger {
-	return log.New(os.Stderr, fmt.Sprintf("[%s] ", opt.name), log.Ltime|log.Lmicroseconds)
+	return log.New(os.Stderr, fmt.Sprintf("[%s] ", opt.role), log.Ltime|log.Lmicroseconds)
 }
 
 type Node struct {

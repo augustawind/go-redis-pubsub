@@ -17,21 +17,19 @@ const (
 	ACKNOWLEDGEMENT = "ACK"
 )
 
-type Role string
-
 const (
-	RoleDirector Role = "director"
-	RoleAgent    Role = "agent"
+	RoleDirector = "director"
+	RoleAgent    = "agent"
 )
 
 func InvalidRole(msg string) error {
 	return errors.Errorf("%s: must be one of 'director' or 'agent'", msg)
 }
 
-func run(role Role, opts *ClientOptions) {
+func run(opts *ClientOptions) {
 	node := NewNode(opts)
 
-	switch role {
+	switch opts.role {
 	case RoleDirector:
 		c := make(chan []byte)
 		go node.Subscribe(chanBU, c)
@@ -72,7 +70,7 @@ func run(role Role, opts *ClientOptions) {
 	case "":
 		panic(InvalidRole("empty role"))
 	default:
-		panic(InvalidRole(fmt.Sprintf("invalid role '%s", role)))
+		panic(InvalidRole(fmt.Sprintf("invalid role '%s", opts.role)))
 	}
 
 }
