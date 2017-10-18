@@ -1,123 +1,78 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 
 	"github.com/garyburd/redigo/redis"
 )
 
-var reader = bufio.NewReader(os.Stdin)
-
-type pub struct {
-	conn     redis.Conn
-	log      *log.Logger
-	channel  string
-	messages []string
-	prompt   bool
-	counter  int
-}
-
-type sub struct {
-	conn    redis.PubSubConn
-	log     *log.Logger
-	channel string
-}
-
-type clientOptions struct {
+type ClientOptions struct {
+	name     string
 	host     string
 	password string
 	db       int
-	channel  string
+	//pubChannels []string
+	//subChannels []string
 }
 
-func (opt *clientOptions) newConn() redis.Conn {
+func (opt *ClientOptions) newConn() redis.Conn {
 	conn, err := redis.Dial(
 		"tcp", opt.host, redis.DialPassword(opt.password), redis.DialDatabase(opt.db))
 	check(err)
 	return conn
 }
 
-func newLogger(name string) *log.Logger {
-	return log.New(os.Stderr, fmt.Sprintf("[%s] ", name), log.Ltime|log.Lmicroseconds)
+func (opt *ClientOptions) newLogger() *log.Logger {
+	return log.New(os.Stderr, fmt.Sprintf("[%s] ", opt.name), log.Ltime|log.Lmicroseconds)
 }
 
-func newPub(opts *clientOptions, prompt bool, messages []string) *pub {
-	if len(messages) == 0 {
-		messages = defaultMessages
-	}
-	return &pub{
-		conn:     opts.newConn(),
-		log:      newLogger("pub"),
-		channel:  opts.channel,
-		messages: messages,
-		prompt:   prompt,
-		counter:  0,
-	}
+type Node struct {
+	*ClientOptions
+	conn    redis.Conn
+	subConn redis.PubSubConn
+	log     *log.Logger
 }
 
-func newSub(opts *clientOptions) *sub {
-	return &sub{
-		conn:    redis.PubSubConn{opts.newConn()},
-		log:     newLogger("sub"),
-		channel: opts.channel,
+func NewNode(opts *ClientOptions) *Node {
+	return &Node{
+		conn:    opts.newConn(),
+		subConn: redis.PubSubConn{Conn: opts.newConn()},
+		log:     opts.newLogger(),
 	}
 }
 
-func (p *pub) publish(c chan int) {
-	n, err := redis.Int(p.conn.Do(
-		"PUBLISH", p.channel, p.newMessage(),
-	))
+func (m *Node) Publish(channel string, msg string) int {
+	n, err := redis.Int(m.conn.Do("PUBLISH", channel, msg))
 	check(err)
 
-	p.log.Printf("message received by ( %d ) recipient(s)", n)
-	p.counter++
-	c <- n
+	m.log.Printf("---- publish ----\n\tsend MSG\t=\t<< %s >>\n\tthru CHANNEL\t=\t<< %s >>\n\t# of CLIENTS\t=\t<< %d >>",
+		msg, channel, n)
+	// TODO: wait for feedback from subscribers before sending to channel
+	return n
 }
 
-func (p *pub) newMessage() string {
-	return fmt.Sprintf("#%04d :: %s", p.counter, choice(p.messages))
-}
-
-func (s *sub) subscribe(c chan bool) {
-	s.conn.Subscribe(s.channel)
+func (m *Node) Subscribe(channel string, c chan []byte) {
+	m.subConn.Subscribe(channel)
 
 	for {
-		switch v := s.conn.Receive().(type) {
+		switch v := m.subConn.Receive().(type) {
 		case redis.Message:
-			s.log.Printf("channel: %s | message: %s\n",
-				v.Channel, v.Data)
-			c <- true
+			m.log.Printf("--- subscribe ---\n\treceive MSG\t=\t<< %s >>\n\tthru CHANNEL\t=\t<< %s >>",
+				v.Data, v.Channel)
+			c <- v.Data
 		case redis.PMessage:
-			s.log.Printf("channel: %s | message: %s\n",
-				v.Channel, v.Data)
-			c <- true
+			m.log.Printf("--- subscribe ---\n\treceive PMSG\t=\t<< %s >>\n\tthru CHANNEL\t=\t<< %s >>\n\twith PATTERN\t=\t<< %s >>",
+				v.Data, v.Channel, v.Pattern)
+			c <- v.Data
 		case redis.Subscription:
-			s.log.Printf("channel: %s | kind: %s | count: %d\n",
-				v.Channel, v.Kind, v.Count)
+			m.log.Printf("--- subscribe ---\n\treceive ACTION\t=\t<< %s >>\n\tthru CHANNEL\t=\t<< %s >>\n\t# of CLIENTS\t=\t<< %d >>",
+				v.Kind, v.Channel, v.Count)
 		case error:
 			panic(v)
 		}
 	}
-	// TODO: remove this, keep it rolling
-	err := s.conn.Unsubscribe(s.channel)
-	check(err)
-}
-
-func (p *pub) interact() {
-	if p.prompt {
-		fmt.Print("Press <Enter>...")
-		_, err := reader.ReadString('\n')
-		check(err)
-	}
-}
-
-func choice(xs []string) string {
-	i := rand.Intn(len(xs))
-	return xs[i]
 }
 
 func check(err error) {
