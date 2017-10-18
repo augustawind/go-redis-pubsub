@@ -1,107 +1,123 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
-	"time"
 
 	"github.com/garyburd/redigo/redis"
 )
 
-var (
-	messages []string
-	pub      pubsub
-	sub      pubsub
-)
+var reader = bufio.NewReader(os.Stdin)
 
-type pubsub struct {
-	*options
-	role    role
-	conn    redis.Conn
-	counter int
-	log     *log.Logger
+type pub struct {
+	conn     redis.Conn
+	log      *log.Logger
+	channel  string
+	messages []string
+	prompt   bool
+	counter  int
 }
 
-type options struct {
+type sub struct {
+	conn    redis.PubSubConn
+	log     *log.Logger
+	channel string
+}
+
+type clientOptions struct {
 	host     string
 	password string
 	db       int
 	channel  string
-	messages []string
 }
 
-type role string
-
-const (
-	isPub role = "pub"
-	isSub role = "sub"
-)
-
-func newPub(opts *options) pubsub {
-	return newPubSub(isPub, opts)
-}
-
-func newSub(opts *options) pubsub {
-	return newPubSub(isSub, opts)
-}
-
-func newPubSub(role role, opts *options) pubsub {
+func (opt *clientOptions) newConn() redis.Conn {
 	conn, err := redis.Dial(
-		"tcp", opts.host, redis.DialPassword(opts.password), redis.DialDatabase(opts.db))
+		"tcp", opt.host, redis.DialPassword(opt.password), redis.DialDatabase(opt.db))
 	check(err)
-	return pubsub{
-		options: opts,
-		role:    role,
-		conn:    conn,
-		counter: 0,
-		log:     log.New(os.Stderr, fmt.Sprintf("[%s] ", role), log.Ltime|log.Lmicroseconds),
+	return conn
+}
+
+func newLogger(name string) *log.Logger {
+	return log.New(os.Stderr, fmt.Sprintf("[%s] ", name), log.Ltime|log.Lmicroseconds)
+}
+
+func newPub(opts *clientOptions, prompt bool, messages []string) *pub {
+	if len(messages) == 0 {
+		messages = defaultMessages
+	}
+	return &pub{
+		conn:     opts.newConn(),
+		log:      newLogger("pub"),
+		channel:  opts.channel,
+		messages: messages,
+		prompt:   prompt,
+		counter:  0,
 	}
 }
 
-func (pub pubsub) publish() {
+func newSub(opts *clientOptions) *sub {
+	return &sub{
+		conn:    redis.PubSubConn{opts.newConn()},
+		log:     newLogger("sub"),
+		channel: opts.channel,
+	}
+}
+
+func (p *pub) publish(c chan int) {
+	n, err := redis.Int(p.conn.Do(
+		"PUBLISH", p.channel, p.newMessage(),
+	))
+	check(err)
+
+	p.log.Printf("message received by ( %d ) recipient(s)", n)
+	p.counter++
+	c <- n
+}
+
+func (p *pub) newMessage() string {
+	return fmt.Sprintf("#%04d :: %s", p.counter, choice(p.messages))
+}
+
+func (s *sub) subscribe(c chan bool) {
+	s.conn.Subscribe(s.channel)
+
 	for {
-		msg := fmt.Sprintf("[%04d] %s", pub.counter, choice(pub.messages))
-		n, err := redis.Int(pub.conn.Do("PUBLISH", pub.channel, msg))
-		check(err)
-		pub.counter++
-
-		msg = fmt.Sprintf("message received by (%d) recipient", n)
-		if n != 1 {
-			pub.log.Print(msg, "s")
-		} else {
-			pub.log.Print(msg)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-func (sub pubsub) subscribe() {
-	psc := redis.PubSubConn{Conn: sub.conn}
-	psc.Subscribe(sub.channel)
-
-	for sub.counter < 10 {
-		switch v := psc.Receive().(type) {
+		switch v := s.conn.Receive().(type) {
 		case redis.Message:
-			sub.log.Printf(
-				"channel: %s | message: %s\n",
+			s.log.Printf("channel: %s | message: %s\n",
 				v.Channel, v.Data)
+			c <- true
+		case redis.PMessage:
+			s.log.Printf("channel: %s | message: %s\n",
+				v.Channel, v.Data)
+			c <- true
 		case redis.Subscription:
-			sub.log.Printf(
-				"channel: %s | kind: %s | count: %d\n",
+			s.log.Printf("channel: %s | kind: %s | count: %d\n",
 				v.Channel, v.Kind, v.Count)
 		case error:
 			panic(v)
 		}
 	}
-	err := psc.Unsubscribe(sub.channel)
+	// TODO: remove this, keep it rolling
+	err := s.conn.Unsubscribe(s.channel)
 	check(err)
 }
 
-func choice(options []string) string {
-	i := rand.Intn(len(options))
-	return options[i]
+func (p *pub) interact() {
+	if p.prompt {
+		fmt.Print("Press <Enter>...")
+		_, err := reader.ReadString('\n')
+		check(err)
+	}
+}
+
+func choice(xs []string) string {
+	i := rand.Intn(len(xs))
+	return xs[i]
 }
 
 func check(err error) {

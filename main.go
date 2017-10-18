@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 )
 
@@ -24,10 +25,12 @@ var (
 	}
 )
 
-func init() {
+func main() {
 	flags = pflag.NewFlagSet("pubsub", pflag.ExitOnError)
 
-	opts := new(options)
+	opts := new(clientOptions)
+	role := flags.StringP("role", "r", "sub",
+		"client's role, one of 'pub' or 'sub'")
 	flags.StringVarP(&opts.host, "host", "h", "localhost:6379",
 		"redis server HOST:PORT")
 	flags.StringVarP(&opts.password, "password", "p", "",
@@ -36,18 +39,33 @@ func init() {
 		"redis server database (default 0)")
 	flags.StringVarP(&opts.channel, "channel", "c", defaultChannel,
 		"redis channel name")
-	flags.StringSliceVarP(&opts.messages, "messages", "m", nil,
+
+	pubPrompt := flags.BoolP("prompt", "i", false,
+		"wait for user input before each publish")
+	pubMessages := flags.StringSliceP("messages", "m", nil,
 		"messages to publish, chosen randomly (default messages included)")
+
 	flags.Parse(os.Args)
 
-	pub = newPub(opts)
-	sub = newSub(opts)
-}
-
-func main() {
-	go pub.publish()
-	time.Sleep(500 * time.Millisecond)
-	go sub.subscribe()
-	for {
+	switch *role {
+	case "pub":
+		pub := newPub(opts, *pubPrompt, *pubMessages)
+		c := make(chan int)
+		go pub.publish(c)
+		_ = <-c
+		pub.interact()
+	case "sub":
+		sub := newSub(opts)
+		c := make(chan bool)
+		go sub.subscribe(c)
+		sub.log.Printf("Waiting for message...")
+		start := time.Now().Unix()
+		_ = <-c
+		end := time.Now().Unix()
+		sub.log.Printf("Spent %d seconds waiting.", end-start)
+	case "":
+		panic(errors.New("positional argument ROLE not found; must provide 'pub' or 'sub'"))
+	default:
+		panic(errors.Errorf("invalid role '%s': must be one of 'pub' or 'sub'"))
 	}
 }
