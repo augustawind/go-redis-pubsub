@@ -17,6 +17,9 @@ var (
 		"profit is wage theft",
 		"a spectre is haunting europe",
 		"WORKING MEN OF ALL COUNTRIES, UNITE!",
+		"you have nothing to lose but your chains",
+		"periodic economic crisis is unavoidable in a capitalist economy",
+		"the streets will run red with the blood of the bourgeoisie",
 		"eat the rich",
 	}
 )
@@ -34,7 +37,7 @@ func init() {
 	flags.StringVarP(&opts.channel, "channel", "c", defaultChannel,
 		"redis channel name")
 	flags.StringSliceVarP(&opts.messages, "messages", "m", nil,
-		"messages to publish to the channel, chosen randomly (default messages included)")
+		"messages to publish, chosen randomly (default messages included)")
 	flags.Parse(os.Args)
 
 	pub = newPub(opts)
