@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/garyburd/redigo/redis"
+	"github.com/satori/go.uuid"
 )
 
 type ClientOptions struct {
@@ -24,22 +25,25 @@ func (opt *ClientOptions) newConn() redis.Conn {
 	return conn
 }
 
-func (opt *ClientOptions) newLogger() *log.Logger {
-	return log.New(os.Stderr, fmt.Sprintf("[%s] ", opt.role), log.Ltime|log.Lmicroseconds)
+func (opt *ClientOptions) newLogger(id uuid.UUID) *log.Logger {
+	return log.New(os.Stderr, fmt.Sprintf("[%s:%s] ", opt.role, id.String()[:8]), log.Ltime|log.Lmicroseconds)
 }
 
 type Node struct {
 	*ClientOptions
+	id      uuid.UUID
 	conn    redis.Conn
 	subConn redis.PubSubConn
 	log     *log.Logger
 }
 
 func NewNode(opts *ClientOptions) *Node {
+	id := uuid.NewV4()
 	return &Node{
+		id:      id,
 		conn:    opts.newConn(),
 		subConn: redis.PubSubConn{Conn: opts.newConn()},
-		log:     opts.newLogger(),
+		log:     opts.newLogger(id),
 	}
 }
 
