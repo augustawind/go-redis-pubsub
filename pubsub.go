@@ -92,7 +92,7 @@ func subscribe(conn redis.Conn) {
 	psc := redis.PubSubConn{Conn: conn}
 	psc.Subscribe(channel)
 
-	for {
+	for counter < 10 {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			subLog.Printf("channel: %s | message: %s\n", v.Channel, v.Data)
@@ -102,6 +102,8 @@ func subscribe(conn redis.Conn) {
 			panic(v)
 		}
 	}
+	err := psc.Unsubscribe(channel)
+	check(err)
 }
 
 func check(err error) {
